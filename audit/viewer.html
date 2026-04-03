@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenVault — Audit Trail</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        .mono { font-family: 'SF Mono', 'JetBrains Mono', monospace; font-size: 0.8em; }
+        .trade-card { transition: border-color 0.2s ease; }
+        .trade-card:hover { border-color: #d1d5db; }
+        .expand-content { max-height: 0; overflow: hidden; transition: max-height 0.35s ease; }
+        .expand-content.open { max-height: 2000px; }
+        .chevron { transition: transform 0.2s ease; }
+        .chevron.open { transform: rotate(180deg); }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .gradient-header { background: linear-gradient(135deg, #0c2d48 0%, #1a4a6e 50%, #2a6f97 100%); }
+    </style>
+</head>
+<body class="bg-[#f9fafb] min-h-screen">
+
+    <!-- Header -->
+    <header class="gradient-header text-white px-8 py-6">
+        <div class="max-w-5xl mx-auto">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-medium tracking-tight">OpenVault</h1>
+                    <p class="text-white/60 text-sm mt-1">Policy-gated signing · AI reasoning audit trail · Solana</p>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div id="stats-approved" class="text-sm">
+                        <span class="text-emerald-300 font-medium text-lg">—</span>
+                        <span class="text-white/50 ml-1">approved</span>
+                    </div>
+                    <div id="stats-denied" class="text-sm">
+                        <span class="text-red-300 font-medium text-lg">—</span>
+                        <span class="text-white/50 ml-1">denied</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-8 py-8">
+
+        <!-- Session Cards -->
+        <section class="mb-10">
+            <h2 class="text-xs font-medium text-neutral-400 uppercase tracking-widest mb-4">Active Sessions</h2>
+            <div id="sessions-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="text-sm text-neutral-400">Loading...</div>
+            </div>
+        </section>
+
+        <!-- Trade Timeline -->
+        <section>
+            <h2 class="text-xs font-medium text-neutral-400 uppercase tracking-widest mb-4">Trade Audit Trail</h2>
+            <div id="trades-container" class="space-y-3">
+                <div class="text-sm text-neutral-400">Loading...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        const API = '';
+        // Track which trade cards are expanded so refresh doesn't close them
+        const expandedCards = new Set();
+
+        async function fetchJSON(url) {
+            const res = await fetch(API + url);
+            return res.json();
+        }
+
+        function formatSol(lamports) {
+            const sol = parseInt(lamports) / 1e9;
+            if (sol >= 1) return sol.toFixed(2) + ' SOL';
+            if (sol >= 0.01) return sol.toFixed(4) + ' SOL';
+            return lamports + ' lamports';
+        }
+
+        function formatTime(iso) {
+            return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function formatDate(iso) {
+            const d = new Date(iso);
+            return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + formatTime(iso);
+        }
+
+        function policyBadge(result) {
+            if (result === 'APPROVED') return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">Approved</span>`;
+            if (result === 'DENIED') return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">Denied</span>`;
+            if (result === 'SKIPPED') return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">Skipped</span>`;
+            return `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600">${result}</span>`;
+        }
+
+        function directionBadge(dir) {
+            if (dir === 'BUY') return `<span class="text-emerald-600 font-medium">BUY</span>`;
+            if (dir === 'SELL') return `<span class="text-red-600 font-medium">SELL</span>`;
+            return `<span class="text-neutral-400">${dir}</span>`;
+        }
+
+        function renderSessionCard(session) {
+            const budget = parseInt(session.budget_wei);
+            const spent = parseInt(session.spent_wei);
+            const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+            const isActive = session.status === 'active';
+            const barColor = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-amber-500' : 'bg-emerald-500';
+
+            return `
+                <div class="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-2">
+                            <div class="w-2 h-2 rounded-full ${isActive ? 'bg-emerald-500 pulse' : 'bg-neutral-300'}"></div>
+                            <span class="text-sm font-medium text-neutral-900">Session ${session.session_id.slice(0, 8)}</span>
+                        </div>
+                        <span class="text-xs text-neutral-400 mono">${formatDate(session.started_at)}</span>
+                    </div>
+                    <div class="mb-3">
+                        <div class="flex justify-between text-xs text-neutral-500 mb-1.5">
+                            <span>Budget Used</span>
+                            <span class="mono">${formatSol(session.spent_wei)} / ${formatSol(session.budget_wei)}</span>
+                        </div>
+                        <div class="w-full bg-neutral-100 rounded-full h-2">
+                            <div class="${barColor} h-2 rounded-full transition-all" style="width: ${pct}%"></div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-neutral-400">
+                        ${session.expires_at ? 'Expires ' + formatDate(session.expires_at) : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTradeCard(trade) {
+            const id = trade.trade_id;
+            const isOpen = expandedCards.has(id);
+            const hasDetails = trade.research_memo || trade.research_memo_preview || trade.denial_reason;
+            const statusColor = trade.policy_result === 'APPROVED' ? 'bg-emerald-500' : trade.policy_result === 'DENIED' ? 'bg-red-500' : 'bg-amber-500';
+
+            return `
+                <div class="trade-card bg-white border border-neutral-200 rounded-2xl overflow-hidden shadow-sm" id="card-${id}">
+                    <div class="px-5 py-4 flex items-center justify-between cursor-pointer" onclick="toggleExpand('${id}')">
+                        <div class="flex items-center gap-4">
+                            <div class="w-1 h-10 rounded-full ${statusColor}"></div>
+                            <div>
+                                <div class="flex items-center gap-2.5">
+                                    ${directionBadge(trade.direction)}
+                                    <span class="text-neutral-900 font-medium">${trade.token.toUpperCase()}</span>
+                                    <span class="text-sm text-neutral-400 mono">${formatSol(trade.amount_wei)}</span>
+                                </div>
+                                <div class="text-xs text-neutral-400 mt-0.5">${formatDate(trade.timestamp)}</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            ${policyBadge(trade.policy_result)}
+                            ${hasDetails ? `<svg class="w-4 h-4 text-neutral-400 chevron ${isOpen ? 'open' : ''}" id="chevron-${id}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"/></svg>` : ''}
+                        </div>
+                    </div>
+                    <div class="expand-content ${isOpen ? 'open' : ''}" id="expand-${id}">
+                        <div class="px-5 pb-5 border-t border-neutral-100 pt-4">
+                            ${trade.denial_reason ? `
+                                <div class="mb-4">
+                                    <div class="text-xs font-medium text-red-600 uppercase tracking-wider mb-1.5">Policy Denial</div>
+                                    <div class="text-sm text-red-800 bg-red-50 border border-red-100 rounded-xl p-3 mono">${trade.denial_reason}</div>
+                                </div>
+                            ` : ''}
+                            ${trade.signature ? `
+                                <div class="mb-4">
+                                    <div class="text-xs font-medium text-emerald-600 uppercase tracking-wider mb-1.5">Ed25519 Signature</div>
+                                    <div class="text-xs text-neutral-500 mono break-all bg-emerald-50 border border-emerald-100 rounded-xl p-3">${trade.signature}</div>
+                                </div>
+                            ` : ''}
+                            <div class="grid grid-cols-2 gap-3 mb-4 text-xs">
+                                <div><span class="text-neutral-400">Chain</span> <span class="mono block text-neutral-600 mt-0.5">Solana</span></div>
+                                <div><span class="text-neutral-400">Session</span> <span class="mono block text-neutral-600 mt-0.5">${(trade.session_id || '').slice(0, 8)}</span></div>
+                                <div><span class="text-neutral-400">Trade ID</span> <span class="mono block text-neutral-600 mt-0.5">${trade.trade_id.slice(0, 12)}</span></div>
+                                <div><span class="text-neutral-400">Signal</span> <span class="block text-neutral-600 mt-0.5">${trade.research_rating || '—'}</span></div>
+                            </div>
+                            ${trade.research_memo || trade.research_memo_preview ? `
+                                <div>
+                                    <div class="text-xs font-medium text-neutral-900 uppercase tracking-wider mb-1.5">AI Research Reasoning</div>
+                                    <div class="text-sm text-neutral-600 bg-neutral-50 border border-neutral-200 rounded-xl p-4 max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed">${trade.research_memo || trade.research_memo_preview}</div>
+                                </div>
+                            ` : `
+                                <button onclick="loadFullTrade('${id}')" class="text-xs text-blue-600 hover:underline" id="load-btn-${id}">Load full AI reasoning →</button>
+                                <div id="full-memo-${id}" class="hidden mt-3">
+                                    <div class="text-xs font-medium text-neutral-900 uppercase tracking-wider mb-1.5">AI Research Reasoning</div>
+                                    <div class="text-sm text-neutral-600 bg-neutral-50 border border-neutral-200 rounded-xl p-4 max-h-80 overflow-y-auto whitespace-pre-wrap leading-relaxed" id="memo-content-${id}"></div>
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleExpand(id) {
+            if (expandedCards.has(id)) {
+                expandedCards.delete(id);
+            } else {
+                expandedCards.add(id);
+            }
+            const el = document.getElementById('expand-' + id);
+            const chevron = document.getElementById('chevron-' + id);
+            if (el) el.classList.toggle('open');
+            if (chevron) chevron.classList.toggle('open');
+        }
+
+        async function loadFullTrade(tradeId) {
+            const btn = document.getElementById('load-btn-' + tradeId);
+            const memoDiv = document.getElementById('full-memo-' + tradeId);
+            const memoContent = document.getElementById('memo-content-' + tradeId);
+            if (btn) btn.textContent = 'Loading...';
+            try {
+                const trade = await fetchJSON('/api/audit/trades/' + tradeId);
+                if (trade.research_memo) {
+                    memoContent.textContent = trade.research_memo;
+                    memoDiv.classList.remove('hidden');
+                    if (btn) btn.classList.add('hidden');
+                } else {
+                    if (btn) btn.textContent = 'No research memo available';
+                }
+            } catch (e) {
+                if (btn) btn.textContent = 'Failed to load';
+            }
+        }
+
+        async function refreshData() {
+            // Stats
+            try {
+                const stats = await fetchJSON('/api/audit/stats');
+                document.getElementById('stats-approved').innerHTML =
+                    `<span class="text-emerald-300 font-medium text-lg">${stats.approved}</span><span class="text-white/50 ml-1">approved</span>`;
+                document.getElementById('stats-denied').innerHTML =
+                    `<span class="text-red-300 font-medium text-lg">${stats.denied}</span><span class="text-white/50 ml-1">denied</span>`;
+            } catch (e) {}
+
+            // Sessions
+            try {
+                const { sessions } = await fetchJSON('/api/sessions');
+                const container = document.getElementById('sessions-container');
+                if (sessions.length === 0) {
+                    container.innerHTML = '<div class="text-sm text-neutral-400 col-span-2">No sessions yet. Run the demo to get started.</div>';
+                } else {
+                    container.innerHTML = sessions.map(renderSessionCard).join('');
+                }
+            } catch (e) {}
+
+            // Trades
+            try {
+                const { trades } = await fetchJSON('/api/audit/trades');
+                const container = document.getElementById('trades-container');
+                if (trades.length === 0) {
+                    container.innerHTML = '<div class="text-sm text-neutral-400">No trades yet.</div>';
+                } else {
+                    container.innerHTML = trades.map(renderTradeCard).join('');
+                }
+            } catch (e) {}
+        }
+
+        refreshData();
+        setInterval(refreshData, 5000);
+    </script>
+</body>
+</html>
