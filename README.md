@@ -1,6 +1,6 @@
 # OpenVault
 
-**Policy-gated wallet infrastructure for AI trading agents on Solana.**
+**Policy-gated wallet infrastructure for AI trading agents.**
 
 Built on the [Open Wallet Standard](https://github.com/open-wallet-standard/core) at the OWS Hackathon — April 2026.
 
